@@ -1,0 +1,14 @@
+*.iml
+.gradle/
+build/
+local.properties
+.idea/
+.DS_Store
+node_modules/
+webui/npm.log
+keystore.properties
+*.jks
+*.keystore
+app/src/main/assets/webui/
+webui/tsconfig.tsbuildinfo
+webui/dist/

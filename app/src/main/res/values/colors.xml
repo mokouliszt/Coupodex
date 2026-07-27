@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- UI は暖色ホワイト＋オレンジ。アイコン側のティールは launcher 背景のみに残す。 -->
+    <color name="paper">#FFFFF8F3</color>
+    <color name="orange">#FFF2570D</color>
+    <color name="icon_bg">#FF075964</color>
+</resources>

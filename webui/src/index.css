@@ -1,0 +1,175 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 印字系のみバンドル（英数字・日付・距離）。日本語は端末フォントを使う。 */
+@font-face {
+  font-family: "Space Mono";
+  src: url("/fonts/space-mono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Space Mono";
+  src: url("/fonts/space-mono-700.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+
+:root {
+  /* 暖色ホワイトの地に、オレンジを一色だけ強く効かせる */
+  --paper: #fff8f3;      /* 画面の地 */
+  --card: #ffffff;       /* 券面・シート */
+  --stub: #fff0e4;       /* 券面の半券部分 */
+  --ink: #2b1608;        /* 文字（温かみのある黒） */
+  --orange: #f2570d;
+  --orange-soft: #ffe4d1;
+  --amber: #ffb020;
+  --teal: #0b5c66;       /* アイコン由来。地図リンク等に少量だけ */
+  --danger: #d6452b;
+  --spent: #a3968d;      /* 期限切れ・使用済みは色を抜く */
+  --line: rgba(43, 22, 8, 0.1);
+  --muted: rgba(43, 22, 8, 0.55);
+  --faint: rgba(43, 22, 8, 0.34);
+  --safe-top: 0px;
+  --safe-bottom: 0px;
+  --ime: 0px;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overscroll-behavior: none;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: -apple-system, Roboto, "Noto Sans JP", "Hiragino Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+input,
+textarea {
+  font-family: inherit;
+  color: var(--ink);
+}
+
+/* ---------- 券面（このアプリの signature） ---------- */
+
+.ticket {
+  position: relative;
+  background: var(--card);
+  color: var(--ink);
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  box-shadow: 0 2px 10px rgba(43, 22, 8, 0.05);
+  isolation: isolate;
+}
+
+/* 半券の切り取り線に対応する両端のノッチ（地の色でくり抜く） */
+.ticket::before,
+.ticket::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  bottom: var(--notch, 52px);
+  transform: translateY(50%);
+  z-index: 2;
+}
+.ticket::before {
+  left: -10px;
+}
+.ticket::after {
+  right: -10px;
+}
+
+/* 半券側は淡いオレンジの地にして「ちぎる側」を示す */
+.stub {
+  background: var(--stub);
+  border-top: 1.5px dashed rgba(242, 87, 13, 0.38);
+  border-radius: 0 0 15px 15px;
+}
+
+/* 期限切れ・使用済みのスタンプ */
+.stamp {
+  font-family: "Space Mono", monospace;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  border: 2.5px solid currentColor;
+  border-radius: 6px;
+  padding: 3px 10px;
+  transform: rotate(-9deg);
+  opacity: 0.75;
+}
+
+/* ---------- スキャン演出 ---------- */
+
+.reticle span {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  border: 3px solid var(--orange);
+  border-radius: 4px;
+}
+.reticle span:nth-child(1) { top: 0; left: 0; border-right: 0; border-bottom: 0; border-top-left-radius: 12px; }
+.reticle span:nth-child(2) { top: 0; right: 0; border-left: 0; border-bottom: 0; border-top-right-radius: 12px; }
+.reticle span:nth-child(3) { bottom: 0; left: 0; border-right: 0; border-top: 0; border-bottom-left-radius: 12px; }
+.reticle span:nth-child(4) { bottom: 0; right: 0; border-left: 0; border-top: 0; border-bottom-right-radius: 12px; }
+
+@keyframes sweep {
+  0% { transform: translateY(-6%); opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { transform: translateY(106%); opacity: 0; }
+}
+.sweep { animation: sweep 2.1s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+.breathe { animation: breathe 1.8s ease-in-out infinite; }
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+.rise { animation: rise 0.34s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+
+@keyframes pop {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.pop { animation: pop 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+@keyframes blink { 50% { opacity: 0.15; } }
+.caret { animation: blink 1s steps(1) infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sweep, .breathe, .rise, .pop, .caret { animation: none; }
+}
+
+/* 印字ラベル（アイブロウ） */
+.eyebrow {
+  font-family: "Space Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}

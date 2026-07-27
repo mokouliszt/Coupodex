@@ -1,0 +1,5 @@
+node_modules/
+dist/
+public/icon.png
+public/screenshots/
+*.tsbuildinfo
