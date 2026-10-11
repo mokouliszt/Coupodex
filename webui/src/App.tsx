@@ -10,13 +10,17 @@ import {
   X,
   LogOut,
   Loader2,
+  Check,
+  Copy,
+  ExternalLink,
 } from "lucide-react";
-import type { Coupon, Fix, NativeState } from "@/lib/native";
+import type { CodexAccount, CodexDownload, CodexModel, Coupon, Fix, NativeState } from "@/lib/native";
 import {
   getState,
   listCoupons,
   locate,
   login,
+  cancelLogin,
   logout,
   on,
   saveSettings,
@@ -24,6 +28,12 @@ import {
   deleteCoupon,
   saveCoupon,
   setBridgeErrorHandler,
+  codexModels,
+  codexCheckUpdate,
+  codexUpdate,
+  copyText,
+  openUrl,
+  newReqId,
 } from "@/lib/native";
 import { distanceM, expiryState, match, daysLeft } from "@/lib/search";
 import { useKeyboard } from "@/lib/viewport";
@@ -76,9 +86,31 @@ export default function App() {
   // 削除は即座に画面から消し、取り消し期限が切れてから端末へ反映する（写真も戻せる）
   const [pendingDelete, setPendingDelete] = useState<Coupon | null>(null);
   const pendingRef = useRef<Coupon | null>(null);
+  // モデルの一覧は Codex から取る。アプリ側には持たない
+  const [codex, setCodex] = useState<CodexPanel>({ models: null, account: null });
+  const [download, setDownload] = useState<CodexDownload | null>(() => getState().codex?.updating ?? null);
   const keyboard = useKeyboard();
 
-  useEffect(() => on("auth", () => setState(getState())), []);
+  useEffect(() => {
+    const offs = [
+      on("auth", () => {
+        setState(getState());
+        setCodex({ models: null, account: null });
+      }),
+      on("codexModels", (p) => setCodex((c) => ({ ...c, models: p.models ?? [], account: p.account ?? null, error: p.error }))),
+      on("codexUpdate", (p) => {
+        setDownload(null);
+        setCodex((c) => ({ ...c, checking: false, available: p.available || undefined }));
+        setState(getState());
+        if (p.updated) setNotice({ text: `Codex を v${p.updated} に更新しました` });
+        else if (p.error) setNotice({ text: p.error });
+        else if (p.upToDate && p.reqId) setNotice({ text: "Codex は最新です" });
+      }),
+      on("codexUpdateProgress", (p) => setDownload(p)),
+      on("notice", (p) => setNotice({ text: p.message })),
+    ];
+    return () => offs.forEach((off) => off());
+  }, []);
   useEffect(() => {
     setBridgeErrorHandler((m) => setNotice({ text: m }));
     return () => setBridgeErrorHandler(null);
@@ -381,6 +413,17 @@ export default function App() {
         state={state}
         onSaved={() => setState(getState())}
         count={coupons.length}
+        codex={codex}
+        download={download}
+        onLoadModels={() => codexModels(newReqId())}
+        onCheckUpdate={() => {
+          setCodex((c) => ({ ...c, checking: true }));
+          codexCheckUpdate(newReqId());
+        }}
+        onUpdate={() => {
+          setDownload({ version: codex.available || state.codex.update.latest, done: 0, total: 0 });
+          codexUpdate(newReqId());
+        }}
       />
     </div>
   );
@@ -477,24 +520,57 @@ function Empty({
   );
 }
 
+interface CodexPanel {
+  models: CodexModel[] | null;
+  account: CodexAccount | null;
+  error?: string;
+  checking?: boolean;
+  available?: string;
+}
+
+/** Select は空文字を値にできないので、「デフォルトに任せる」をこの値で表す。 */
+const AUTO = "__auto__";
+
+const newerThan = (a: string, b: string) => {
+  const pa = a.split(".").map((x) => parseInt(x, 10) || 0);
+  const pb = b.split(".").map((x) => parseInt(x, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d > 0;
+  }
+  return false;
+};
+
 function SettingsSheet({
   open,
   onOpenChange,
   state,
   onSaved,
   count,
+  codex,
+  download,
+  onLoadModels,
+  onCheckUpdate,
+  onUpdate,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   state: NativeState;
   onSaved: () => void;
   count: number;
+  codex: CodexPanel;
+  download: CodexDownload | null;
+  onLoadModels: () => void;
+  onCheckUpdate: () => void;
+  onUpdate: () => void;
 }) {
   const [s, setS] = useState(state.settings);
   // 開いた時だけ現在値を取り込む。state.settings は毎回別オブジェクトなので、
   // 依存に入れると入力途中で値が巻き戻る。
   useEffect(() => {
     if (open) setS(state.settings);
+    // 開くたびに取り直す。一覧は Codex 側で変わる
+    if (open && state.codex.bundled) onLoadModels();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -505,6 +581,48 @@ function SettingsSheet({
     onSaved();
   };
 
+  const models = codex.models;
+  const defaultModel = models?.find((m) => m.isDefault) ?? models?.[0];
+  const pinned = s.model ? models?.find((m) => m.id === s.model) : undefined;
+  const pinnedMissing = !!s.model && !!models && models.length > 0 && !pinned;
+  const current = pinned ?? defaultModel;
+
+  const modelOptions = [
+    { value: AUTO, label: "自動" },
+    ...(models ?? []).map((m) => ({ value: m.id, label: m.displayName })),
+    ...(s.model && !pinned ? [{ value: s.model, label: pinnedMissing ? `${s.model}（現在は使えません）` : s.model }] : []),
+  ];
+  // 段階は Codex での呼び名のまま出す（xhigh・max・ultra のように後から増えるものがあるため）
+  const efforts = current?.efforts ?? [];
+  const effortOptions = [
+    { value: AUTO, label: "自動" },
+    ...efforts.map((e) => ({ value: e, label: e })),
+    ...(s.effort && !efforts.includes(s.effort)
+      ? [{ value: s.effort, label: efforts.length ? `${s.effort}（このモデルでは使えません）` : s.effort }]
+      : []),
+  ];
+
+  // 「自動」が今どれに当たるかは、選択肢の名前ではなく各欄の下で示す
+  const modelNote = !state.codex.bundled
+    ? "この端末では Codex を実行できません（arm64 のみ対応）。"
+    : codex.error
+      ? `モデルの一覧を取得できませんでした: ${codex.error}`
+      : !models
+        ? "モデルの一覧を取得しています…"
+        : pinnedMissing
+          ? "選んでいたモデルは現在使えないため、「自動」で実行します。"
+          : !s.model && defaultModel
+            ? `「自動」は Codex の既定に従います（現在は ${defaultModel.displayName}）。`
+            : "";
+  const effortNote =
+    "低いほど速く、高いほど読み取り精度が上がります。" +
+    (!s.effort && current?.defaultEffort ? `「自動」ではモデルの既定（${current.defaultEffort}）を使います。` : "");
+
+  const upd = state.codex.update;
+  const latest = codex.available || upd.latest;
+  const newer = !!latest && !!upd.active && newerThan(latest, upd.active);
+  const pct = download && download.total > 0 ? Math.round((download.done / download.total) * 100) : null;
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent title="設定">
@@ -513,40 +631,43 @@ function SettingsSheet({
           <div>
             <Label>読み取り・検索に使うモデル</Label>
             <div className="mt-1.5">
-              <Select value={s.model} onValueChange={(v) => put({ model: v })}>
+              <Select
+                value={s.model || AUTO}
+                // モデルを変えたら深さはそのモデルのデフォルトに戻す（モデルごとに選べる段階が違う）
+                onValueChange={(v) => put({ model: v === AUTO ? "" : v, effort: "" })}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {state.models.map((m) => (
-                    <SelectItem key={m} value={m}>
-                      {m}
+                  {modelOptions.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
+            {modelNote && <p className="mt-1.5 text-[12px] leading-relaxed text-[var(--muted)]">{modelNote}</p>}
           </div>
 
           <div>
             <Label>思考の深さ</Label>
             <div className="mt-1.5">
-              <Select value={s.effort} onValueChange={(v) => put({ effort: v })}>
+              <Select value={s.effort || AUTO} onValueChange={(v) => put({ effort: v === AUTO ? "" : v })}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {state.efforts.map((e) => (
-                    <SelectItem key={e} value={e}>
-                      {e}
+                  {effortOptions.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <p className="mt-1.5 text-[12px] leading-relaxed text-[var(--muted)]">
-              xhigh・max は gpt-5.6 系のみ。低いほど速く、高いほど読み取り精度が上がります。
-            </p>
+            <p className="mt-1.5 text-[12px] leading-relaxed text-[var(--muted)]">{effortNote}</p>
           </div>
 
           <div>
@@ -575,11 +696,65 @@ function SettingsSheet({
             </p>
           </div>
 
+          {state.codex.bundled && (
+            <div className="rounded-xl border border-line p-4">
+              <div className="eyebrow mb-2 text-orange/60">CODEX</div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-mono text-[14px]">v{upd.active}</div>
+                  <p className="text-[12px] text-[var(--muted)]">
+                    {upd.active === upd.bundled ? "アプリ同梱版" : `更新済み（同梱版 v${upd.bundled}）`}
+                  </p>
+                </div>
+                {newer ? (
+                  <Button size="sm" onClick={onUpdate} disabled={!!download}>
+                    v{latest} に更新
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="outline" onClick={onCheckUpdate} disabled={codex.checking || !!download}>
+                    {codex.checking ? "確認中…" : "更新を確認"}
+                  </Button>
+                )}
+              </div>
+              {download && (
+                <div className="mt-3">
+                  <div className="h-1 overflow-hidden rounded-full bg-line">
+                    <div className="h-full bg-orange transition-[width]" style={{ width: `${pct ?? 8}%` }} />
+                  </div>
+                  <p className="mt-1 font-mono text-[11px] text-[var(--muted)]">
+                    v{download.version} をダウンロード中{pct !== null ? ` ${pct}%` : ""}
+                  </p>
+                </div>
+              )}
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="text-[13px]">自動更新</span>
+                <div className="w-[132px]">
+                  <Select
+                    value={s.codexAutoUpdate}
+                    onValueChange={(v) => put({ codexAutoUpdate: v as typeof s.codexAutoUpdate })}
+                  >
+                    <SelectTrigger className="h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="wifi">Wi-Fiのみ</SelectItem>
+                      <SelectItem value="always">常に</SelectItem>
+                      <SelectItem value="off">しない</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <p className="mt-2 text-[12px] leading-relaxed text-[var(--muted)]">
+                Codex を更新すると、新しいモデルが使えるようになります。
+              </p>
+            </div>
+          )}
+
           <div className="rounded-xl border border-line p-4">
             <div className="eyebrow mb-2 text-orange/60">DATA</div>
             <p className="text-[13px] leading-relaxed text-[var(--muted)]">
               クーポン{count}枚と写真は、この端末の中だけに保存されています。
-              解析と検索はあなたのChatGPTアカウントで実行されます。
+              解析と検索は{codex.account?.email ? ` ${codex.account.email} の` : "あなたの"}ChatGPTアカウントで実行されます。
             </p>
             <Button
               variant="danger"
@@ -600,8 +775,60 @@ function SettingsSheet({
   );
 }
 
+interface LoginFlow {
+  phase: "idle" | "browser" | "device";
+  verificationUrl?: string;
+  userCode?: string;
+  error?: string;
+}
+
+/**
+ * ChatGPT へのログイン。実際の認証は同梱の Codex が行う。
+ * ブラウザ方式が基本で、アプリへ戻ってこられない端末向けにコード方式も残す。
+ */
 function Login() {
-  const [busy, setBusy] = useState(false);
+  const [flow, setFlow] = useState<LoginFlow>({ phase: "idle" });
+  const [copied, setCopied] = useState(false);
+  const reqRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const offs = [
+      on("codexLoginStarted", (p) => {
+        if (p.reqId !== reqRef.current) return;
+        setFlow(
+          p.device ? { phase: "device", verificationUrl: p.verificationUrl, userCode: p.userCode } : { phase: "browser" },
+        );
+      }),
+      on("loginFailed", (p) => {
+        if (p.reqId !== reqRef.current) return;
+        reqRef.current = null;
+        setFlow({ phase: "idle", error: p.message ?? "ログインに失敗しました" });
+      }),
+    ];
+    return () => offs.forEach((off) => off());
+  }, []);
+
+  const start = (device: boolean) => {
+    const id = newReqId();
+    reqRef.current = id;
+    setCopied(false);
+    setFlow({ phase: device ? "device" : "browser" });
+    login(id, device);
+  };
+
+  const cancel = () => {
+    if (reqRef.current) cancelLogin();
+    reqRef.current = null;
+    setFlow({ phase: "idle" });
+  };
+
+  const copyAndOpen = () => {
+    if (!flow.userCode) return;
+    copyText(flow.userCode);
+    setCopied(true);
+    if (flow.verificationUrl) openUrl(flow.verificationUrl);
+  };
+
   return (
     <div
       className="relative flex flex-col justify-between overflow-hidden bg-paper px-7"
@@ -648,24 +875,72 @@ function Login() {
       </div>
 
       <div className="relative" style={{ paddingBottom: "calc(var(--safe-bottom) + 20px)" }}>
-        <Button
-          size="lg"
-          className="w-full"
-          disabled={busy}
-          onClick={() => {
-            setBusy(true);
-            login();
-            setTimeout(() => setBusy(false), 4000);
-          }}
-        >
-          {busy ? <Loader2 size={18} className="animate-spin" /> : null}
-          ChatGPTでログイン
-        </Button>
-        <p className="mt-3.5 text-center text-[12px] leading-relaxed text-[var(--faint)]">
-          読み取りと検索は、あなたのChatGPTサブスクリプションで動きます。
-          <br />
-          クーポンと写真は端末内だけに保存されます。
-        </p>
+        {flow.phase === "idle" && (
+          <>
+            {flow.error && <p className="mb-3 text-center text-[13px] text-danger">{flow.error}</p>}
+            <Button size="lg" className="w-full" onClick={() => start(false)}>
+              ChatGPTでログイン
+            </Button>
+            <button
+              className="mt-1 w-full py-2.5 text-[13px] text-[var(--muted)] underline underline-offset-4"
+              onClick={() => start(true)}
+            >
+              コードでログイン
+            </button>
+            <p className="mt-2 text-center text-[12px] leading-relaxed text-[var(--faint)]">
+              読み取りと検索は、あなたのChatGPTサブスクリプションで動きます。
+              <br />
+              クーポンと写真は端末内だけに保存されます。
+            </p>
+          </>
+        )}
+
+        {flow.phase === "browser" && (
+          <>
+            <div className="flex items-center gap-2.5 rounded-xl border border-line bg-card px-4 py-3.5 text-[14px]">
+              <Loader2 size={16} className="shrink-0 animate-spin text-orange" />
+              ブラウザでログインを完了してください
+            </div>
+            <p className="mt-2 text-[12px] leading-relaxed text-[var(--muted)]">
+              完了したら、端末の戻るボタンでアプリに戻ってください。
+            </p>
+            <Button variant="ghost" className="mt-2 w-full" onClick={cancel}>
+              キャンセル
+            </Button>
+          </>
+        )}
+
+        {flow.phase === "device" && (
+          <>
+            {flow.userCode ? (
+              <>
+                <p className="text-[13px] text-[var(--muted)]">次のページでこのコードを入力してください</p>
+                <div className="mt-1.5 select-text rounded-xl border border-line bg-card py-3.5 text-center font-mono text-[24px] tracking-[0.14em]">
+                  {flow.userCode}
+                </div>
+                <Button className="mt-2.5 w-full" onClick={copyAndOpen}>
+                  {copied ? <Check size={16} /> : <Copy size={16} />}
+                  コードをコピーして開く
+                  <ExternalLink size={14} className="opacity-70" />
+                </Button>
+                <p className="mt-2 text-[12px] leading-relaxed text-[var(--muted)]">
+                  ChatGPT の設定（セキュリティ）で、デバイスコード認証の許可が必要な場合があります。
+                </p>
+              </>
+            ) : (
+              <p className="flex items-center gap-2 text-[13px] text-[var(--muted)]">
+                <Loader2 size={15} className="animate-spin" />
+                コードを発行しています
+              </p>
+            )}
+            <div className="mt-3 flex items-center justify-between text-[13px] text-[var(--muted)]">
+              <span>承認を待っています</span>
+              <button className="px-1 py-1" onClick={cancel}>
+                キャンセル
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
