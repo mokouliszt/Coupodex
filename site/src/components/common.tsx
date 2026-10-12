@@ -2,9 +2,9 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 export const REPO = "https://github.com/mokouliszt/Coupodex";
-export const APK = `${REPO}/releases/download/v1.0.3/Coupodex-1.0.3.apk`;
+export const APK = `${REPO}/releases/download/v1.1.0/Coupodex-1.0.3.apk`;
 export const RELEASES = `${REPO}/releases`;
-export const VERSION = "v1.0.3";
+export const VERSION = "v1.1.0";
 
 /** `/Coupodex/` 配下に置かれるので、画像はすべて BASE_URL 起点で解決する */
 export const asset = (p: string) => `${import.meta.env.BASE_URL}${p}`;
