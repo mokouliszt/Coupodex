@@ -25,16 +25,48 @@ export interface Coupon {
 }
 
 export interface Settings {
+  /** 空 = Codex のデフォルト。Codex の更新に追従する */
   model: string;
+  /** 空 = そのモデルのデフォルト */
   effort: string;
+  codexAutoUpdate: "wifi" | "always" | "off";
   radius: number;
   defaultPlace: string;
 }
 
+/** Codex が提示しているモデル（model/list）。アプリ側に一覧は持たない。 */
+export interface CodexModel {
+  id: string;
+  displayName: string;
+  description: string;
+  isDefault: boolean;
+  defaultEffort: string;
+  efforts: string[];
+}
+
+export interface CodexAccount {
+  email?: string | null;
+  planType?: string | null;
+}
+
+export interface CodexUpdateStatus {
+  /** 実行に使う版 */
+  active: string;
+  /** APK に同梱した版 */
+  bundled: string;
+  latest: string;
+  checkedAt: number;
+}
+
+export interface CodexDownload {
+  version: string;
+  done: number;
+  total: number;
+}
+
 export interface NativeState {
   loggedIn: boolean;
-  models: string[];
-  efforts: string[];
+  codex: { bundled: boolean; update: CodexUpdateStatus; updating: CodexDownload | null };
   settings: Settings;
   places: string[];
   hasLocation: boolean;
@@ -49,8 +81,13 @@ export interface Fix {
 
 interface NativeBridge {
   state(): string;
-  login(): void;
+  login(reqId: string, device: boolean): void;
+  cancelLogin(): void;
   logout(): void;
+  codexModels(reqId: string): void;
+  codexCheckUpdate(reqId: string): void;
+  codexUpdate(reqId: string): void;
+  copy(text: string): void;
   coupons(): string;
   saveCoupon(json: string): string;
   deleteCoupon(id: string): string;
@@ -131,9 +168,8 @@ window.__native = (type, payload) => {
 
 const DEV_STATE: NativeState = {
   loggedIn: false,
-  models: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.5"],
-  efforts: ["minimal", "low", "medium", "high", "xhigh", "max"],
-  settings: { model: "gpt-5.6-sol", effort: "high", radius: 500, defaultPlace: "" },
+  codex: { bundled: true, update: { active: "", bundled: "", latest: "", checkedAt: 0 }, updating: null },
+  settings: { model: "", effort: "", codexAutoUpdate: "wifi", radius: 500, defaultPlace: "" },
   places: [],
   hasLocation: false,
 };
@@ -184,8 +220,13 @@ export function deleteCoupon(id: string): Coupon[] | null {
   return parseList(n.deleteCoupon(id), "削除");
 }
 
-export const login = () => N()?.login();
+export const login = (reqId: string, device: boolean) => N()?.login(reqId, device);
+export const cancelLogin = () => N()?.cancelLogin();
 export const logout = () => N()?.logout();
+export const codexModels = (reqId: string) => N()?.codexModels(reqId);
+export const codexCheckUpdate = (reqId: string) => N()?.codexCheckUpdate(reqId);
+export const codexUpdate = (reqId: string) => N()?.codexUpdate(reqId);
+export const copyText = (t: string) => N()?.copy(t);
 export const saveSettings = (s: Settings) => N()?.saveSettings(JSON.stringify(s));
 export const pickPhoto = (mode: "camera" | "gallery") => N()?.pickPhoto(mode);
 export const locate = () => N()?.locate();

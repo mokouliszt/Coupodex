@@ -17,7 +17,6 @@ class Store(context: Context) {
     private val prefs = appCtx.getSharedPreferences("app", Context.MODE_PRIVATE)
 
     val photosDir: File = File(appCtx.filesDir, "photos").apply { mkdirs() }
-    val workspace: File = File(appCtx.filesDir, "workspace").apply { mkdirs() }
 
     @Synchronized
     fun load(): JSONArray =
@@ -73,17 +72,36 @@ class Store(context: Context) {
     }
 
     // ---- 設定 ----
+
+    init { migrateSettings() }
+
+    /**
+     * v1.0 までは固定のモデル一覧から選ぶしかなく、「Codex のデフォルト」を選べなかった。
+     * 設定画面はどの項目を変えても全項目を保存していたので、残っている値は意図して
+     * 固定したものとは限らない。一度だけ消して Codex のデフォルトに追従させる。
+     */
+    private fun migrateSettings() {
+        if (prefs.getInt("settingsVersion", 1) >= 2) return
+        prefs.edit().remove("model").remove("effort").putInt("settingsVersion", 2).apply()
+    }
+
     fun settings(): JSONObject = JSONObject().apply {
-        put("model", prefs.getString("model", CodexClient.MODELS.first()))
-        put("effort", prefs.getString("effort", "high"))
+        // 空 = Codex のデフォルト（モデル）／そのモデルのデフォルト（推論の深さ）
+        put("model", prefs.getString("model", "") ?: "")
+        put("effort", prefs.getString("effort", "") ?: "")
+        // Codex 本体の自動更新: wifi | always | off
+        put("codexAutoUpdate", prefs.getString("codexAutoUpdate", "wifi") ?: "wifi")
         put("radius", prefs.getInt("radius", 500))
         put("defaultPlace", prefs.getString("defaultPlace", "") ?: "")
     }
 
     fun saveSettings(o: JSONObject) {
         prefs.edit().apply {
-            o.optString("model").takeIf { it.isNotEmpty() }?.let { putString("model", it) }
-            o.optString("effort").takeIf { it.isNotEmpty() }?.let { putString("effort", it) }
+            // model / effort は空文字も有効な値（デフォルトに戻す）なので、キーの有無で判定する
+            if (o.has("model")) putString("model", o.optString("model"))
+            if (o.has("effort")) putString("effort", o.optString("effort"))
+            o.optString("codexAutoUpdate").takeIf { it in setOf("wifi", "always", "off") }
+                ?.let { putString("codexAutoUpdate", it) }
             if (o.has("radius")) putInt("radius", o.optInt("radius", 500))
             if (o.has("defaultPlace")) putString("defaultPlace", o.optString("defaultPlace"))
         }.apply()

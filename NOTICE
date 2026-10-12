@@ -1,0 +1,18 @@
+Coupodex
+Copyright (c) 2026 mokouliszt
+Licensed under the MIT License (see LICENSE).
+
+This application redistributes the following third-party components.
+Full license texts are in third_party/licenses/ and inside the APK under
+assets/licenses/.
+
+1. OpenAI Codex app-server and codex-code-mode-host (binaries, unmodified)
+   https://github.com/openai/codex  (release rust-v0.162.1, and later releases
+   downloaded at runtime by the in-app updater)
+   Apache License 2.0 - Copyright 2025 OpenAI
+   Files: Codex-APACHE-2.0.txt, Codex-NOTICE.txt
+
+2. Android/Java libraries (AndroidX, Kotlin coroutines, OkHttp) - Apache
+   License 2.0. Web UI libraries (React, Radix UI, lucide-react, Tailwind CSS,
+   react-markdown, remark-gfm, class-variance-authority, clsx, tailwind-merge)
+   - MIT / ISC / Apache License 2.0.
