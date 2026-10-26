@@ -91,6 +91,9 @@ APIキーには対応していません。初回にアプリ内から ChatGPT �
 [Releases](../../releases) から APK をダウンロードして端末にインストールしてください。
 事前に「提供元不明のアプリ」のインストールを許可しておく必要があります。
 
+アプリ内で Codex を更新できるよう targetSdk を 28 にしているため、インストール時に
+古い Android 向けのアプリである旨の警告が表示されることがあります。
+
 ### ソースからビルドする
 
 ```bash
@@ -104,6 +107,10 @@ cd webui && npm ci && npm run build && cd ..
 ```
 
 Web UI のビルド成果物はリポジトリに含まれていません。**手順 1 を省略すると空の WebView が起動します。**
+
+手順 2 では、`openai/codex` の Releases から app-server と code-mode-host の aarch64 版を取得し、
+SHA-256 を照合してから APK に同梱します。オフラインでビルドする場合は
+`-PcodexBinary=<app-server のパス> -PcodexHostBinary=<code-mode-host のパス>` で手元のファイルを指定してください。
 
 署名する場合は、`keystore.properties.example` を `keystore.properties` にコピーして書き換えるか、
 環境変数 `COUPODEX_KEYSTORE` / `COUPODEX_STORE_PW` / `COUPODEX_KEY_ALIAS` / `COUPODEX_KEY_PW`
@@ -130,8 +137,10 @@ npm run build    # site/dist に出力
 
 ```
 app/src/main/java/dev/mokouliszt/coupodex/
-  CodexAuth.kt       ChatGPT の OAuth（PKCE + localhost:1455 ループバック）
-  CodexClient.kt     Codex backend を直接叩く。web検索ON / shell を full-auto サンドボックスで実行
+  CodexRuntime.kt    同梱の Codex app-server を stdio の JSON-RPC で動かす（ログイン・モデル一覧・実行）
+  CodexUpdater.kt    Codex の展開と、新しいリリースへのアプリ内更新
+  CodexClient.kt     指示文・会話・券面写真を Codex の1ターンにまとめて実行。web検索ON / full-auto
+  LocalProxy.kt      Codex の名前解決を Android 側で代行するループバックの CONNECT プロキシ
   Net.kt             システムDNS → Cloudflare DoH フォールバック
   Prompts.kt         券面抽出のJSONスキーマ指示、会話検索の指示
   Store.kt           coupons.json と写真の永続化、設定
@@ -153,36 +162,42 @@ UI は React + Tailwind + shadcn/ui 由来のコンポーネントで構成し�
 `https://appassets.androidplatform.net/` 配下から配信します（`file://` のオリジン制約を避けるため）。
 保存した写真も同じ仕組みで `photos/` 以下から読み込みます。
 
-Android 上で Codex を動作させる部分（PKCE ループバック認証、Responses API の直接呼び出し、
-web検索の常時有効化、shell ツールの full-auto サンドボックス実行）は、
-同作者の **[overlay-ai](https://github.com/mokouliszt/overlay-ai)** の実装を流用しています。
+公式の Codex は musl の静的バイナリで、そのままでは Android 上で名前解決と TLS の検証ができません。
+名前解決はアプリ内のループバックプロキシ（`LocalProxy.kt`）が代行し、ルート証明書は端末の
+AndroidCAStore から書き出して渡しています。端末に保存した実行ファイルを起動するため、targetSdk は 28 です。
 
 ## データの扱い
 
 - クーポン・写真・設定は端末内（`filesDir`）にのみ保存されます。外部への同期は行いません
 - 端末外に送信されるのは、解析・検索のリクエストに含まれる券面の画像とクーポンのテキスト、
   および現在地を許可した場合の緯度経度です。送信先はログイン済みの ChatGPT アカウントのみです
+- このほか、Codex の更新確認と取得のために GitHub（`openai/codex` のリリース）へ接続します
 - アンインストールするとデータも削除されます。バックアップ機能はありません
 - 位置情報は Play Services に依存せず `LocationManager` のみで取得し、端末には保存しません
 
 ## 制限事項
 
-本アプリは公開されていない API を直接利用しています。ChatGPT の Codex backend
-(`chatgpt.com/backend-api/codex/responses`) に直接リクエストを送信するため、
-OpenAI 側の仕様変更により動作しなくなる場合があります。
+本アプリは、OpenAI が Apache License 2.0 で公開している Codex の app-server を同梱し、
+その JSON-RPC プロトコルでログイン・モデルの一覧・実行を行っています。
+Codex 側の仕様変更により動作しなくなる場合があります。
 利用にあたっては OpenAI の利用規約を各自で確認してください。
 
 ## English
 
 Coupodex is an Android app for managing paper coupons. Photograph a coupon and it extracts the
 store, the offer, where you stored it, the expiry date and any notes, then lets you search by
-keyword, fuzzily, or in natural language ("anything I can use around here?"). All parsing and
-search run through your own ChatGPT subscription (Codex OAuth) directly from the device: no
-server and no API key are required. Coupon data and photos never leave the phone except as part
-of those requests.
+keyword, fuzzily, or in natural language ("anything I can use around here?"). Parsing and search
+run through the official Codex app-server bundled in the app, signed in with your own ChatGPT
+subscription: no server and no API key are required. The model list comes from Codex itself, so
+new models show up without an app update, and the bundled Codex updates itself from the
+`openai/codex` releases. Coupon data and photos never leave the phone except as part of those
+requests.
 
-The UI is Japanese only. Requires Android 8.0+ and an active ChatGPT subscription.
+The UI is Japanese only. Requires an arm64 device running Android 8.0+ and an active ChatGPT
+subscription.
 
 ## ライセンス
 
 [MIT](LICENSE) / Copyright (c) 2026 mokouliszt
+
+同梱している OpenAI Codex は Apache License 2.0 です（[NOTICE](NOTICE)、`third_party/licenses/`）。
